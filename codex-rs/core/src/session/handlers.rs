@@ -69,6 +69,7 @@ use codex_protocol::mcp::RequestId as ProtocolRequestId;
 use codex_protocol::user_input::UserInput;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
+use codex_thread_store::ThreadMetadataPatch;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -767,12 +768,23 @@ async fn persist_thread_name_update(
     sess: &Arc<Session>,
     event: ThreadNameUpdatedEvent,
 ) -> anyhow::Result<EventMsg> {
+    let name = event
+        .thread_name
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("thread name update is missing a name"))?;
     let msg = EventMsg::ThreadNameUpdated(event);
-    let item = RolloutItem::EventMsg(msg.clone());
     let live_thread = sess.live_thread_for_persistence("rename thread")?;
     live_thread.persist().await?;
+    // The local thread store applies name patches by appending the
+    // `ThreadNameUpdated` rollout event and updating compatibility indexes.
     live_thread
-        .append_items(std::slice::from_ref(&item))
+        .update_metadata(
+            ThreadMetadataPatch {
+                name: Some(name),
+                ..Default::default()
+            },
+            /*include_archived*/ false,
+        )
         .await?;
     live_thread.flush().await?;
     Ok(msg)
@@ -792,7 +804,7 @@ pub(super) async fn persist_thread_memory_mode_update(
     Ok(())
 }
 
-/// Persists the thread name in the rollout and state database, updates in-memory state, and
+/// Persists the thread name through the thread store, updates in-memory state, and
 /// emits a `ThreadNameUpdated` event on success.
 pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) {
     let Some(name) = crate::util::normalize_thread_name(&name) else {
@@ -815,7 +827,7 @@ pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) 
     let msg = match persist_thread_name_update(sess, updated).await {
         Ok(msg) => msg,
         Err(err) => {
-            warn!("Failed to persist thread name update to rollout: {err}");
+            warn!("Failed to persist thread name update through thread store: {err}");
             let event = Event {
                 id: sub_id,
                 msg: EventMsg::Error(ErrorEvent {
@@ -828,24 +840,9 @@ pub async fn set_thread_name(sess: &Arc<Session>, sub_id: String, name: String) 
         }
     };
 
-    if let Some(state_db) = sess.services.state_db.as_deref()
-        && let Err(err) = state_db
-            .update_thread_title(sess.conversation_id, &name)
-            .await
-    {
-        warn!("Failed to update thread title in state db: {err}");
-    }
-
     {
         let mut state = sess.state.lock().await;
         state.session_configuration.thread_name = Some(name.clone());
-    }
-
-    let codex_home = sess.codex_home().await;
-    if let Err(err) =
-        crate::rollout::append_thread_name(&codex_home, sess.conversation_id, &name).await
-    {
-        warn!("Failed to update legacy thread name index: {err}");
     }
 
     sess.deliver_event_raw(Event { id: sub_id, msg }).await;
