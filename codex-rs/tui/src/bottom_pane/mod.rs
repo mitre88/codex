@@ -1544,6 +1544,12 @@ impl BottomPane {
         }
     }
 
+    pub(crate) fn set_status_line_hyperlink(&mut self, url: Option<String>) {
+        if self.composer.set_status_line_hyperlink(url) {
+            self.request_redraw();
+        }
+    }
+
     pub(crate) fn set_status_line_enabled(&mut self, enabled: bool) {
         if self.composer.set_status_line_enabled(enabled) {
             self.request_redraw();
@@ -2402,6 +2408,7 @@ mod tests {
                 policy: None,
                 path_to_skills_md: test_path_buf("/tmp/test-skill/SKILL.md").abs(),
                 scope: crate::test_support::skill_scope_user(),
+                plugin_id: None,
             }]),
         });
 
