@@ -103,6 +103,7 @@ use codex_protocol::protocol::SkillScope as CoreSkillScope;
 use codex_protocol::protocol::SkillToolDependency as CoreSkillToolDependency;
 use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
 use codex_protocol::protocol::ThreadGoalStatus as CoreThreadGoalStatus;
+use codex_protocol::protocol::ThreadSource as CoreThreadSource;
 use codex_protocol::protocol::TokenUsage as CoreTokenUsage;
 use codex_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
 use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
@@ -2195,6 +2196,35 @@ impl From<SessionSource> for CoreSessionSource {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case", export_to = "v2/")]
+pub enum ThreadSource {
+    User,
+    Subagent,
+    MemoryConsolidation,
+}
+
+impl From<CoreThreadSource> for ThreadSource {
+    fn from(value: CoreThreadSource) -> Self {
+        match value {
+            CoreThreadSource::User => ThreadSource::User,
+            CoreThreadSource::Subagent => ThreadSource::Subagent,
+            CoreThreadSource::MemoryConsolidation => ThreadSource::MemoryConsolidation,
+        }
+    }
+}
+
+impl From<ThreadSource> for CoreThreadSource {
+    fn from(value: ThreadSource) -> Self {
+        match value {
+            ThreadSource::User => CoreThreadSource::User,
+            ThreadSource::Subagent => CoreThreadSource::Subagent,
+            ThreadSource::MemoryConsolidation => CoreThreadSource::MemoryConsolidation,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -3826,6 +3856,9 @@ pub struct ThreadStartParams {
     pub ephemeral: Option<bool>,
     #[ts(optional = nullable)]
     pub session_start_source: Option<ThreadStartSource>,
+    /// Optional client-supplied analytics source classification for this thread.
+    #[ts(optional = nullable)]
+    pub thread_source: Option<ThreadSource>,
     /// Optional sticky environments for this thread.
     ///
     /// Omitted selects the default environment when environment access is
@@ -4080,6 +4113,9 @@ pub struct ThreadForkParams {
     pub developer_instructions: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ephemeral: bool,
+    /// Optional client-supplied analytics source classification for this forked thread.
+    #[ts(optional = nullable)]
+    pub thread_source: Option<ThreadSource>,
     /// When true, return only thread metadata and live fork state without
     /// populating `thread.turns`. This is useful when the client plans to call
     /// `thread/turns/list` immediately after forking.
@@ -5348,6 +5384,8 @@ pub struct Thread {
     pub cli_version: String,
     /// Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.).
     pub source: SessionSource,
+    /// Optional analytics source classification for this thread.
+    pub thread_source: Option<ThreadSource>,
     /// Optional random unique nickname assigned to an AgentControl-spawned sub-agent.
     pub agent_nickname: Option<String>,
     /// Optional role (agent_role) assigned to an AgentControl-spawned sub-agent.
