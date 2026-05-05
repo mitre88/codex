@@ -20,6 +20,7 @@ use crate::facts::TurnSteerResult;
 use crate::facts::TurnSubmissionType;
 use crate::now_unix_seconds;
 use codex_app_server_protocol::CodexErrorInfo;
+use codex_app_server_protocol::CommandExecutionSource;
 use codex_login::default_client::originator;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
@@ -454,6 +455,7 @@ pub(crate) struct CodexToolItemEventBase {
     pub(crate) started_at_ms: u64,
     pub(crate) completed_at_ms: u64,
     pub(crate) duration_ms: Option<u64>,
+    pub(crate) execution_duration_ms: Option<u64>,
     pub(crate) review_count: u64,
     pub(crate) guardian_review_count: u64,
     pub(crate) user_review_count: u64,
@@ -462,16 +464,6 @@ pub(crate) struct CodexToolItemEventBase {
     pub(crate) failure_kind: Option<ToolItemFailureKind>,
     pub(crate) requested_additional_permissions: bool,
     pub(crate) requested_network_access: bool,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum CommandExecutionSource {
-    Agent,
-    UserShell,
-    UnifiedExecStartup,
-    UnifiedExecInteraction,
 }
 
 #[allow(dead_code)]
