@@ -4,6 +4,7 @@ use codex_config::remove_user_marketplace_config;
 use codex_plugin::validate_plugin_segment;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -74,24 +75,20 @@ fn remove_marketplace_sync(
 }
 
 fn remove_marketplace_root(root: &Path) -> Result<Option<AbsolutePathBuf>, MarketplaceRemoveError> {
-    if !root.try_exists().map_err(|err| {
-        MarketplaceRemoveError::Internal(format!(
-            "failed to check installed marketplace root {}: {err}",
-            root.display()
-        ))
-    })? {
-        return Ok(None);
-    }
+    let metadata = match fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(MarketplaceRemoveError::Internal(format!(
+                "failed to inspect installed marketplace root {}: {err}",
+                root.display()
+            )));
+        }
+    };
 
     let removed_root = AbsolutePathBuf::try_from(root.to_path_buf()).map_err(|err| {
         MarketplaceRemoveError::Internal(format!(
             "failed to resolve installed marketplace root {}: {err}",
-            root.display()
-        ))
-    })?;
-    let metadata = fs::symlink_metadata(root).map_err(|err| {
-        MarketplaceRemoveError::Internal(format!(
-            "failed to inspect installed marketplace root {}: {err}",
             root.display()
         ))
     })?;
@@ -285,6 +282,51 @@ mod tests {
             }
         );
         assert!(!installed_root.exists());
+        let config =
+            fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE)).unwrap();
+        assert!(!config.contains("[marketplaces.debug]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remove_marketplace_sync_removes_dangling_symlink_installed_root() {
+        let codex_home = TempDir::new().unwrap();
+        record_user_marketplace(
+            codex_home.path(),
+            "debug",
+            &MarketplaceConfigUpdate {
+                last_updated: "2026-04-13T00:00:00Z",
+                last_revision: None,
+                source_type: "git",
+                source: "https://github.com/owner/repo.git",
+                ref_name: Some("main"),
+                sparse_paths: &[],
+            },
+        )
+        .unwrap();
+        let installed_root = marketplace_install_root(codex_home.path()).join("debug");
+        fs::create_dir_all(installed_root.parent().unwrap()).unwrap();
+        let missing_target = codex_home.path().join("missing-target");
+        std::os::unix::fs::symlink(&missing_target, &installed_root).unwrap();
+
+        let outcome = remove_marketplace_sync(
+            codex_home.path(),
+            MarketplaceRemoveRequest {
+                marketplace_name: "debug".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            MarketplaceRemoveOutcome {
+                marketplace_name: "debug".to_string(),
+                removed_installed_root: Some(
+                    AbsolutePathBuf::try_from(installed_root.clone()).unwrap()
+                ),
+            }
+        );
+        assert!(fs::symlink_metadata(&installed_root).is_err());
         let config =
             fs::read_to_string(codex_home.path().join(codex_config::CONFIG_TOML_FILE)).unwrap();
         assert!(!config.contains("[marketplaces.debug]"));
