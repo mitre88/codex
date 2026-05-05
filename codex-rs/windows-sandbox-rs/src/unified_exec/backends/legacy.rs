@@ -412,6 +412,18 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     let hpc_handle = hpc.map(|hpc| Arc::new(StdMutex::new(Some(hpc))));
 
     let process_handle = Arc::new(StdMutex::new(Some(pi.hProcess)));
+    {
+        let process_handle = Arc::clone(&process_handle);
+        protected_metadata_runtime.set_violation_handler(Box::new(move || {
+            if let Ok(guard) = process_handle.lock()
+                && let Some(handle) = guard.as_ref()
+            {
+                unsafe {
+                    let _ = TerminateProcess(*handle, 1);
+                }
+            }
+        }))?;
+    }
     let wait_handle = Arc::clone(&process_handle);
     let command_for_wait = command.clone();
     let guards_for_wait = if persist_aces { Vec::new() } else { guards };

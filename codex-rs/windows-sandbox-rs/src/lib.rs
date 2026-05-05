@@ -304,6 +304,7 @@ mod windows_impl {
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Foundation::SetHandleInformation;
     use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_EXECUTE;
     use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
@@ -570,6 +571,15 @@ mod windows_impl {
             }
         };
         let pi = created.process_info;
+        let child_process_handle = pi.hProcess;
+        protected_metadata_runtime.set_violation_handler(Box::new(move || unsafe {
+            if child_process_handle != 0 && child_process_handle != INVALID_HANDLE_VALUE {
+                let _ = windows_sys::Win32::System::Threading::TerminateProcess(
+                    child_process_handle,
+                    1,
+                );
+            }
+        }))?;
         let _desktop = created;
 
         unsafe {

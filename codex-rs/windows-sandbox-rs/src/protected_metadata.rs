@@ -15,6 +15,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use std::thread;
 use std::time::SystemTime;
@@ -117,6 +119,10 @@ pub(crate) struct ProtectedMetadataRuntime {
 }
 
 impl ProtectedMetadataRuntime {
+    pub(crate) fn set_violation_handler(&self, handler: ViolationHandler) -> Result<()> {
+        self.monitor.set_violation_handler(handler)
+    }
+
     pub(crate) fn finish(mut self) -> Result<Vec<PathBuf>> {
         let monitor_result = self.monitor.finish();
         let cleanup_result = self.guard.cleanup_created_paths();
@@ -153,9 +159,15 @@ impl Drop for SentinelHandle {
 struct MissingCreationMonitor {
     stop_event: HANDLE,
     listeners: Vec<thread::JoinHandle<()>>,
+    monitored_paths: Vec<PathBuf>,
     removed_paths: Arc<Mutex<Vec<PathBuf>>>,
     errors: Arc<Mutex<Vec<String>>>,
+    armed: Arc<AtomicBool>,
+    violation_seen: Arc<AtomicBool>,
+    violation_handler: Arc<Mutex<Option<ViolationHandler>>>,
 }
+
+type ViolationHandler = Box<dyn Fn() + Send + Sync + 'static>;
 
 impl MissingCreationMonitor {
     fn start(paths: &[PathBuf]) -> Result<Self> {
@@ -163,8 +175,12 @@ impl MissingCreationMonitor {
             return Ok(Self {
                 stop_event: 0,
                 listeners: Vec::new(),
+                monitored_paths: Vec::new(),
                 removed_paths: Arc::new(Mutex::new(Vec::new())),
                 errors: Arc::new(Mutex::new(Vec::new())),
+                armed: Arc::new(AtomicBool::new(false)),
+                violation_seen: Arc::new(AtomicBool::new(false)),
+                violation_handler: Arc::new(Mutex::new(None)),
             });
         }
 
@@ -179,8 +195,12 @@ impl MissingCreationMonitor {
         let mut monitor = Self {
             stop_event,
             listeners: Vec::new(),
+            monitored_paths: paths.to_vec(),
             removed_paths: Arc::new(Mutex::new(Vec::new())),
             errors: Arc::new(Mutex::new(Vec::new())),
+            armed: Arc::new(AtomicBool::new(false)),
+            violation_seen: Arc::new(AtomicBool::new(false)),
+            violation_handler: Arc::new(Mutex::new(None)),
         };
 
         for (parent, watched_paths) in monitored_paths_by_parent(paths) {
@@ -222,12 +242,22 @@ impl MissingCreationMonitor {
         let stop_event = self.stop_event;
         let removed_paths = Arc::clone(&self.removed_paths);
         let errors = Arc::clone(&self.errors);
+        let armed = Arc::clone(&self.armed);
+        let violation_seen = Arc::clone(&self.violation_seen);
+        let violation_handler = Arc::clone(&self.violation_handler);
         let parent_display = parent.display().to_string();
         let parent_display_for_listener = parent_display.clone();
         thread::Builder::new()
             .name("codex-protected-metadata-monitor".to_string())
             .spawn(move || {
-                enforce_monitored_paths(&watched_paths, &removed_paths, &errors);
+                enforce_monitored_paths(
+                    &watched_paths,
+                    &removed_paths,
+                    &errors,
+                    armed.load(Ordering::SeqCst),
+                    &violation_seen,
+                    &violation_handler,
+                );
                 loop {
                     let handles = [change_handle, stop_event];
                     let wait_result = unsafe {
@@ -240,7 +270,14 @@ impl MissingCreationMonitor {
                     };
 
                     if wait_result == WAIT_OBJECT_0 {
-                        enforce_monitored_paths(&watched_paths, &removed_paths, &errors);
+                        enforce_monitored_paths(
+                            &watched_paths,
+                            &removed_paths,
+                            &errors,
+                            armed.load(Ordering::SeqCst),
+                            &violation_seen,
+                            &violation_handler,
+                        );
                         if unsafe { FindNextChangeNotification(change_handle) } == 0 {
                             record_monitor_error(
                                 &errors,
@@ -286,6 +323,28 @@ impl MissingCreationMonitor {
                     "failed to start protected metadata monitor for {parent_display}: {err}"
                 )
             })
+    }
+
+    fn set_violation_handler(&self, handler: ViolationHandler) -> Result<()> {
+        {
+            let mut guard = self
+                .violation_handler
+                .lock()
+                .map_err(|_| anyhow!("protected metadata monitor handler state is poisoned"))?;
+            *guard = Some(handler);
+        }
+
+        self.armed.store(true, Ordering::SeqCst);
+        enforce_monitored_paths(
+            &self.monitored_paths,
+            &self.removed_paths,
+            &self.errors,
+            /*record_violation*/ true,
+            &self.violation_seen,
+            &self.violation_handler,
+        );
+
+        Ok(())
     }
 
     fn finish(&mut self) -> Result<Vec<PathBuf>> {
@@ -361,10 +420,16 @@ fn enforce_monitored_paths(
     paths: &[PathBuf],
     removed_paths: &Arc<Mutex<Vec<PathBuf>>>,
     errors: &Arc<Mutex<Vec<String>>>,
+    record_violation: bool,
+    violation_seen: &Arc<AtomicBool>,
+    violation_handler: &Arc<Mutex<Option<ViolationHandler>>>,
 ) {
     for path in paths {
         match existing_metadata_path(path) {
             Ok(Some(existing_path)) => {
+                if record_violation {
+                    record_metadata_violation(violation_seen, violation_handler);
+                }
                 if let Err(err) = remove_metadata_path(&existing_path) {
                     record_monitor_error(
                         errors,
@@ -392,6 +457,23 @@ fn enforce_monitored_paths(
                 ),
             ),
         }
+    }
+}
+
+fn record_metadata_violation(
+    violation_seen: &Arc<AtomicBool>,
+    violation_handler: &Arc<Mutex<Option<ViolationHandler>>>,
+) {
+    if !violation_seen.swap(true, Ordering::SeqCst) {
+        invoke_violation_handler(violation_handler);
+    }
+}
+
+fn invoke_violation_handler(violation_handler: &Arc<Mutex<Option<ViolationHandler>>>) {
+    if let Ok(handler) = violation_handler.lock()
+        && let Some(handler) = handler.as_ref()
+    {
+        handler();
     }
 }
 
@@ -639,6 +721,9 @@ mod tests {
     use super::*;
     use crate::setup::ProtectedMetadataMode;
     use crate::setup::ProtectedMetadataTarget;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::time::Duration;
     use std::time::Instant;
 
@@ -696,6 +781,95 @@ mod tests {
                 .iter()
                 .any(|path| path.file_name().and_then(std::ffi::OsStr::to_str) == Some(".GIT")),
             "removed paths should include the created case variant: {removed:?}"
+        );
+    }
+
+    #[test]
+    fn missing_creation_monitor_invokes_violation_handler_when_path_is_created() {
+        let temp_dir = tempfile::TempDir::new().expect("tempdir");
+        let target = temp_dir.path().join(".codex");
+        let created = temp_dir.path().join(".CODEX");
+        let runtime = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+            path: target,
+            mode: ProtectedMetadataMode::MissingCreationMonitor,
+        }])
+        .expect("guard")
+        .into_runtime()
+        .expect("runtime");
+        let violation_seen = Arc::new(AtomicBool::new(false));
+        runtime
+            .set_violation_handler(Box::new({
+                let violation_seen = Arc::clone(&violation_seen);
+                move || violation_seen.store(true, Ordering::SeqCst)
+            }))
+            .expect("set violation handler");
+
+        std::fs::create_dir_all(&created).expect("create metadata");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while (!violation_seen.load(Ordering::SeqCst) || created.exists())
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        assert!(
+            violation_seen.load(Ordering::SeqCst),
+            "monitor should invoke the violation handler"
+        );
+        assert!(
+            !created.exists(),
+            "monitor should remove protected metadata before final cleanup"
+        );
+        let removed = runtime.finish().expect("finish");
+        assert!(
+            removed
+                .iter()
+                .any(|path| path.file_name().and_then(std::ffi::OsStr::to_str) == Some(".CODEX")),
+            "removed paths should include the created case variant: {removed:?}"
+        );
+    }
+
+    #[test]
+    fn missing_creation_monitor_cleans_pre_arm_path_without_violation() {
+        let temp_dir = tempfile::TempDir::new().expect("tempdir");
+        let target = temp_dir.path().join(".codex");
+        let created = temp_dir.path().join(".CODEX");
+        let runtime = prepare_protected_metadata_targets(&[ProtectedMetadataTarget {
+            path: target,
+            mode: ProtectedMetadataMode::MissingCreationMonitor,
+        }])
+        .expect("guard")
+        .into_runtime()
+        .expect("runtime");
+
+        std::fs::create_dir_all(&created).expect("create metadata before arm");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while created.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !created.exists(),
+            "pre-arm cleanup should remove setup-created metadata"
+        );
+
+        let violation_seen = Arc::new(AtomicBool::new(false));
+        runtime
+            .set_violation_handler(Box::new({
+                let violation_seen = Arc::clone(&violation_seen);
+                move || violation_seen.store(true, Ordering::SeqCst)
+            }))
+            .expect("set violation handler");
+        assert!(
+            !violation_seen.load(Ordering::SeqCst),
+            "pre-arm cleanup should not terminate the command"
+        );
+
+        let removed = runtime.finish().expect("finish");
+        assert!(
+            removed
+                .iter()
+                .any(|path| path.file_name().and_then(std::ffi::OsStr::to_str) == Some(".CODEX")),
+            "removed paths should include the pre-arm case variant: {removed:?}"
         );
     }
 

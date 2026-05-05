@@ -95,6 +95,17 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
 
     let outbound_tx = start_runner_pipe_writer(pipe_write);
     let writer_handle = start_runner_stdin_writer(writer_rx, outbound_tx.clone(), tty, stdin_open);
+    {
+        let outbound_tx = outbound_tx.clone();
+        protected_metadata_runtime.set_violation_handler(Box::new(move || {
+            let _ = outbound_tx.send(FramedMessage {
+                version: 1,
+                message: Message::Terminate {
+                    payload: EmptyPayload::default(),
+                },
+            });
+        }))?;
+    }
     let terminator = {
         let outbound_tx = outbound_tx.clone();
         Some(Box::new(move || {
