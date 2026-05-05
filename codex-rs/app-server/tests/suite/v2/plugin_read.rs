@@ -580,6 +580,7 @@ async fn plugin_read_returns_plugin_details_with_bundle_contents() -> Result<()>
         r##"{
   "name": "demo-plugin",
   "description": "Longer manifest description",
+  "keywords": ["api-key", "developer tools"],
   "interface": {
     "displayName": "Plugin Display Name",
     "shortDescription": "Short description for subtitle",
@@ -739,6 +740,10 @@ enabled = true
             "Draft the reply".to_string(),
             "Find my next action".to_string()
         ])
+    );
+    assert_eq!(
+        response.plugin.summary.keywords,
+        vec!["api-key".to_string(), "developer tools".to_string()]
     );
     assert_eq!(response.plugin.skills.len(), 1);
     assert_eq!(

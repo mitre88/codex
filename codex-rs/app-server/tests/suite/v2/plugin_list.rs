@@ -197,7 +197,7 @@ async fn plugin_list_keeps_valid_marketplaces_when_another_marketplace_fails_to_
         valid_repo_root
             .path()
             .join("plugins/valid-plugin/.codex-plugin/plugin.json"),
-        r#"{"name":"valid-plugin"}"#,
+        r#"{"name":"valid-plugin","keywords":["api-key","developer tools"]}"#,
     )?;
     std::fs::write(invalid_marketplace_path.as_path(), "{not json")?;
 
@@ -246,6 +246,7 @@ async fn plugin_list_keeps_valid_marketplaces_when_another_marketplace_fails_to_
                 auth_policy: PluginAuthPolicy::OnInstall,
                 availability: codex_app_server_protocol::PluginAvailability::Available,
                 interface: None,
+                keywords: vec!["api-key".to_string(), "developer tools".to_string()],
             }],
         }]
     );
@@ -548,6 +549,7 @@ async fn plugin_list_uses_alternate_discoverable_manifest_and_keeps_undiscoverab
                         screenshots: Vec::new(),
                         screenshot_urls: Vec::new(),
                     }),
+                    keywords: Vec::new(),
                 },
                 PluginSummary {
                     id: "missing-plugin@alternate-marketplace".to_string(),
@@ -563,6 +565,7 @@ async fn plugin_list_uses_alternate_discoverable_manifest_and_keeps_undiscoverab
                     auth_policy: PluginAuthPolicy::OnInstall,
                     availability: codex_app_server_protocol::PluginAvailability::Available,
                     interface: None,
+                    keywords: Vec::new(),
                 },
             ],
         }]

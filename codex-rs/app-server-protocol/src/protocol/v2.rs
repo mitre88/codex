@@ -5125,6 +5125,8 @@ pub struct PluginSummary {
     #[serde(default)]
     pub availability: PluginAvailability,
     pub interface: Option<PluginInterface>,
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -11429,6 +11431,7 @@ mod tests {
                         auth_policy: PluginAuthPolicy::OnUse,
                         availability: PluginAvailability::Available,
                         interface: None,
+                        keywords: Vec::new(),
                     },
                     share_url: "https://chatgpt.example/plugins/share/share-key-1".to_string(),
                     local_plugin_path: None,
@@ -11447,6 +11450,7 @@ mod tests {
                         "authPolicy": "ON_USE",
                         "availability": "AVAILABLE",
                         "interface": null,
+                        "keywords": [],
                     },
                     "shareUrl": "https://chatgpt.example/plugins/share/share-key-1",
                     "localPluginPath": null,
