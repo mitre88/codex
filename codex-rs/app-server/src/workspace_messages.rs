@@ -1,4 +1,5 @@
 use codex_backend_client::Client as BackendClient;
+use codex_backend_client::CodexWorkspaceMessage;
 use codex_login::AuthManager;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,13 +36,13 @@ pub(crate) fn spawn_announcement_poller(
 async fn poll_announcements(auth_manager: &AuthManager, chatgpt_base_url: &str) {
     match timeout(
         ANNOUNCEMENT_FETCH_TIMEOUT,
-        fetch_announcement_count(auth_manager, chatgpt_base_url),
+        fetch_announcements(auth_manager, chatgpt_base_url),
     )
     .await
     {
-        Ok(Ok(count)) => {
+        Ok(Ok(announcements)) => {
             debug!(
-                announcement_count = count,
+                announcement_count = announcements.len(),
                 "workspace announcement poll completed"
             );
         }
@@ -54,18 +55,19 @@ async fn poll_announcements(auth_manager: &AuthManager, chatgpt_base_url: &str) 
     }
 }
 
-async fn fetch_announcement_count(
+async fn fetch_announcements(
     auth_manager: &AuthManager,
     chatgpt_base_url: &str,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Vec<CodexWorkspaceMessage>> {
     let Some(auth) = auth_manager.auth().await else {
-        return Ok(0);
+        return Ok(Vec::new());
     };
     if !auth.uses_codex_backend() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
 
     let client = BackendClient::from_auth(chatgpt_base_url.to_owned(), &auth)?;
     let messages = client.list_workspace_messages().await?;
-    Ok(messages.announcements().count())
+    // Preserve backend ranking; the API returns workspace messages ordered by created_at.
+    Ok(messages.announcements().cloned().collect())
 }
