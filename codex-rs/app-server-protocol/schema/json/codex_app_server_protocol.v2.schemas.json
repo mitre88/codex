@@ -668,6 +668,16 @@
             "boolean",
             "null"
           ]
+        },
+        "mcp_app_message_approval_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/McpAppMessageApprovalMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "type": "object"
@@ -7477,6 +7487,13 @@
       "title": "MarketplaceUpgradeResponse",
       "type": "object"
     },
+    "McpAppMessageApprovalMode": {
+      "enum": [
+        "auto",
+        "approve_in_thread"
+      ],
+      "type": "string"
+    },
     "McpAuthStatus": {
       "enum": [
         "unsupported",
@@ -7601,6 +7618,62 @@
       "title": "McpServerOauthLoginResponse",
       "type": "object"
     },
+    "McpServerProvider": {
+      "oneOf": [
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "codex-apps"
+              ],
+              "title": "CodexAppsMcpServerProviderType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "CodexAppsMcpServerProvider",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "type": {
+              "enum": [
+                "mcp"
+              ],
+              "title": "McpMcpServerProviderType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "title": "McpMcpServerProvider",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "pluginId": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "plugin-mcp"
+              ],
+              "title": "PluginMcpMcpServerProviderType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "pluginId",
+            "type"
+          ],
+          "title": "PluginMcpMcpServerProvider",
+          "type": "object"
+        }
+      ]
+    },
     "McpServerRefreshResponse": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "McpServerRefreshResponse",
@@ -7622,6 +7695,9 @@
         },
         "name": {
           "type": "string"
+        },
+        "provider": {
+          "$ref": "#/definitions/McpServerProvider"
         },
         "resourceTemplates": {
           "items": {
@@ -7645,6 +7721,7 @@
       "required": [
         "authStatus",
         "name",
+        "provider",
         "resourceTemplates",
         "resources",
         "tools"

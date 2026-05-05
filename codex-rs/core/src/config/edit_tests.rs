@@ -1,5 +1,6 @@
 use super::*;
 use codex_config::types::AppToolApproval;
+use codex_config::types::McpAppMessageApprovalMode;
 use codex_config::types::McpServerToolConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_config::types::SessionPickerViewMode;
@@ -1011,6 +1012,7 @@ fn blocking_replace_mcp_servers_serializes_tool_approval_overrides() {
                 "search".to_string(),
                 McpServerToolConfig {
                     approval_mode: Some(AppToolApproval::Approve),
+                    mcp_app_message_approval_mode: Some(McpAppMessageApprovalMode::ApproveInThread),
                 },
             )]),
         },
@@ -1031,6 +1033,7 @@ default_tools_approval_mode = \"prompt\"
 
 [mcp_servers.docs.tools.search]
 approval_mode = \"approve\"
+mcp_app_message_approval_mode = \"approve_in_thread\"
 ";
     assert_eq!(raw, expected);
 }
