@@ -7,6 +7,7 @@ use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
+use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::PluginAuthPolicy;
 use codex_app_server_protocol::PluginInstallPolicy;
@@ -271,6 +272,55 @@ async fn plugin_share_save_forwards_access_policy() -> Result<()> {
             remote_plugin_id: "plugins_123".to_string(),
             share_url: "https://chatgpt.example/plugins/share/share-key-1".to_string(),
         }
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn plugin_share_save_rejects_access_policy_for_existing_plugin() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let plugin_root = TempDir::new()?;
+    let plugin_path = write_test_plugin(plugin_root.path(), "demo-plugin")?;
+    let server = MockServer::start().await;
+    write_remote_plugin_config(codex_home.path(), &format!("{}/backend-api", server.uri()))?;
+    write_chatgpt_auth(
+        codex_home.path(),
+        ChatGptAuthFixture::new("chatgpt-token")
+            .account_id("account-123")
+            .chatgpt_user_id("user-123")
+            .chatgpt_account_id("account-123"),
+        AuthCredentialsStoreMode::File,
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+    let request_id = mcp
+        .send_raw_request(
+            "plugin/share/save",
+            Some(json!({
+                "pluginPath": AbsolutePathBuf::try_from(plugin_path)?,
+                "remotePluginId": "plugins_123",
+                "discoverability": "PRIVATE",
+                "shareTargets": [
+                    {
+                        "principalType": "user",
+                        "principalId": "user-1",
+                    },
+                ],
+            })),
+        )
+        .await?;
+
+    let error: JSONRPCError = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+
+    assert_eq!(error.error.code, -32600);
+    assert_eq!(
+        error.error.message,
+        "discoverability and shareTargets are only supported when creating a plugin share; use plugin/share/updateTargets to update share targets"
     );
     Ok(())
 }

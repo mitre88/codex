@@ -649,6 +649,11 @@ impl PluginRequestProcessor {
         {
             return Err(invalid_request("invalid remote plugin id"));
         }
+        if remote_plugin_id.is_some() && (discoverability.is_some() || share_targets.is_some()) {
+            return Err(invalid_request(
+                "discoverability and shareTargets are only supported when creating a plugin share; use plugin/share/updateTargets to update share targets",
+            ));
+        }
 
         let remote_plugin_service_config = RemotePluginServiceConfig {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
