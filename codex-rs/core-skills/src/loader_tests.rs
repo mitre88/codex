@@ -343,12 +343,22 @@ fn write_system_skill(codex_home: &TempDir, dir: &str, name: &str, description: 
 }
 
 fn write_skill_at(root: &Path, dir: &str, name: &str, description: &str) -> PathBuf {
+    write_skill_file_at(root, dir, SKILLS_FILENAME, name, description)
+}
+
+fn write_skill_file_at(
+    root: &Path,
+    dir: &str,
+    filename: &str,
+    name: &str,
+    description: &str,
+) -> PathBuf {
     let skill_dir = root.join(dir);
     fs::create_dir_all(&skill_dir).unwrap();
     let indented_description = description.replace('\n', "\n  ");
     let content =
         format!("---\nname: {name}\ndescription: |-\n  {indented_description}\n---\n\n# Body\n");
-    let path = skill_dir.join(SKILLS_FILENAME);
+    let path = skill_dir.join(filename);
     fs::write(&path, content).unwrap();
     path
 }
@@ -375,6 +385,15 @@ fn write_skill_metadata_at(skill_dir: &Path, contents: &str) -> PathBuf {
 
 fn write_skill_interface_at(skill_dir: &Path, contents: &str) -> PathBuf {
     write_skill_metadata_at(skill_dir, contents)
+}
+
+fn supports_case_distinct_files(root: &Path) -> bool {
+    let probe_dir = root.join("case-sensitivity-probe");
+    fs::create_dir_all(&probe_dir).unwrap();
+    let lower = probe_dir.join("probe");
+    let upper = probe_dir.join("PROBE");
+    fs::write(&lower, "lower").unwrap();
+    !upper.exists()
 }
 
 #[tokio::test]
@@ -1212,6 +1231,80 @@ async fn loads_short_description_from_metadata() {
             name: "demo-skill".to_string(),
             description: "long description".to_string(),
             short_description: Some("short summary".to_string()),
+            interface: None,
+            dependencies: None,
+            policy: None,
+            path_to_skills_md: normalized(&skill_path),
+            scope: SkillScope::User,
+            plugin_id: None,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn loads_skill_file_with_case_insensitive_filename() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let skill_path = write_skill_file_at(
+        &codex_home.path().join("skills"),
+        "upper-case",
+        "SKILL.MD",
+        "upper-case-skill",
+        "from upper-case filename",
+    );
+    let cfg = make_config(&codex_home).await;
+
+    let outcome = load_skills_for_test(&cfg).await;
+    assert!(
+        outcome.errors.is_empty(),
+        "unexpected errors: {:?}",
+        outcome.errors
+    );
+    assert_eq!(
+        outcome.skills,
+        vec![SkillMetadata {
+            name: "upper-case-skill".to_string(),
+            description: "from upper-case filename".to_string(),
+            short_description: None,
+            interface: None,
+            dependencies: None,
+            policy: None,
+            path_to_skills_md: normalized(&skill_path),
+            scope: SkillScope::User,
+            plugin_id: None,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn prefers_exact_skill_filename_over_case_variant() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    if !supports_case_distinct_files(codex_home.path()) {
+        return;
+    }
+
+    let skills_root = codex_home.path().join("skills");
+    let skill_path = write_skill_at(&skills_root, "demo", "canonical-skill", "canonical file");
+    write_skill_file_at(
+        &skills_root,
+        "demo",
+        "SKILL.MD",
+        "uppercase-skill",
+        "uppercase file",
+    );
+    let cfg = make_config(&codex_home).await;
+
+    let outcome = load_skills_for_test(&cfg).await;
+    assert!(
+        outcome.errors.is_empty(),
+        "unexpected errors: {:?}",
+        outcome.errors
+    );
+    assert_eq!(
+        outcome.skills,
+        vec![SkillMetadata {
+            name: "canonical-skill".to_string(),
+            description: "canonical file".to_string(),
+            short_description: None,
             interface: None,
             dependencies: None,
             policy: None,

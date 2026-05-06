@@ -122,6 +122,10 @@ const MAX_DEPENDENCY_URL_LEN: usize = MAX_DESCRIPTION_LEN;
 const MAX_SCAN_DEPTH: usize = 6;
 const MAX_SKILLS_DIRS_PER_ROOT: usize = 2000;
 
+fn is_skills_filename(file_name: &str) -> bool {
+    file_name.eq_ignore_ascii_case(SKILLS_FILENAME)
+}
+
 #[derive(Debug)]
 enum SkillParseError {
     Read(std::io::Error),
@@ -512,6 +516,10 @@ async fn discover_skills_under_root(
             }
         };
 
+        let has_exact_skill_entry = entries
+            .iter()
+            .any(|entry| entry.file_name == SKILLS_FILENAME);
+
         for entry in entries {
             let file_name = entry.file_name;
             if file_name.starts_with('.') {
@@ -569,7 +577,10 @@ async fn discover_skills_under_root(
                 continue;
             }
 
-            if metadata.is_file && file_name == SKILLS_FILENAME {
+            if metadata.is_file && is_skills_filename(&file_name) {
+                if file_name != SKILLS_FILENAME && has_exact_skill_entry {
+                    continue;
+                }
                 match parse_skill_file(fs, &path, scope, plugin_id).await {
                     Ok(skill) => {
                         outcome.skills.push(skill);
