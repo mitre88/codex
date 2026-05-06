@@ -72,6 +72,33 @@ async fn list_tool_suggest_discoverable_plugins_returns_microsoft_curated_plugin
 }
 
 #[tokio::test]
+async fn list_tool_suggest_discoverable_plugins_returns_build_ios_apps_curated_plugin() {
+    let codex_home = tempdir().expect("tempdir should succeed");
+    let curated_root = curated_plugins_repo_path(codex_home.path());
+    write_openai_curated_marketplace(&curated_root, &["sample", "build-ios-apps"]);
+    write_plugins_feature_config(codex_home.path());
+
+    let config = load_plugins_config(codex_home.path()).await;
+    let discoverable_plugins = list_tool_suggest_discoverable_plugins(&config)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        discoverable_plugins,
+        vec![DiscoverablePluginInfo {
+            id: "build-ios-apps@openai-curated".to_string(),
+            name: "build-ios-apps".to_string(),
+            description: Some(
+                "Plugin that includes skills, MCP servers, and app connectors".to_string(),
+            ),
+            has_skills: true,
+            mcp_server_names: vec!["sample-docs".to_string()],
+            app_connector_ids: vec!["connector_calendar".to_string()],
+        }]
+    );
+}
+
+#[tokio::test]
 async fn list_tool_suggest_discoverable_plugins_deduplicates_allowlisted_configured_plugin() {
     let codex_home = tempdir().expect("tempdir should succeed");
     let plugin_id = TOOL_SUGGEST_DISCOVERABLE_PLUGIN_ALLOWLIST
@@ -325,12 +352,12 @@ async fn list_tool_suggest_discoverable_plugins_does_not_reload_marketplace_per_
     let curated_root = curated_plugins_repo_path(codex_home.path());
     write_openai_curated_marketplace(
         &curated_root,
-        &["slack", "build-ios-apps", "life-science-research"],
+        &["slack", "plugin-eval", "life-science-research"],
     );
     write_plugins_feature_config(codex_home.path());
 
     let too_long_prompt = "x".repeat(129);
-    for plugin_name in ["build-ios-apps", "life-science-research"] {
+    for plugin_name in ["plugin-eval", "life-science-research"] {
         write_file(
             &curated_root.join(format!("plugins/{plugin_name}/.codex-plugin/plugin.json")),
             &format!(
@@ -371,7 +398,7 @@ async fn list_tool_suggest_discoverable_plugins_does_not_reload_marketplace_per_
     let normalized_logs = logs.replace('\\', "/");
     assert_eq!(
         normalized_logs
-            .matches("build-ios-apps/.codex-plugin/plugin.json")
+            .matches("plugin-eval/.codex-plugin/plugin.json")
             .count(),
         1
     );
