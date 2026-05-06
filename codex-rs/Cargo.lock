@@ -2732,6 +2732,7 @@ dependencies = [
  "ts-rs",
  "uuid",
  "walkdir",
+ "windows-sys 0.52.0",
  "wiremock",
 ]
 

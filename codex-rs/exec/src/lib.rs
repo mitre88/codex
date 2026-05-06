@@ -157,6 +157,8 @@ use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const EXEC_DEFAULT_LOG_FILTER: &str = "error,opentelemetry_sdk=off,opentelemetry_otlp=off";
+const OPTIONAL_STDIN_APPEND_READY_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(200);
 
 enum InitialOperation {
     UserTurn {
@@ -1783,6 +1785,9 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
         StdinPromptBehavior::Forced => {}
         StdinPromptBehavior::OptionalAppend if stdin_is_terminal => return None,
         StdinPromptBehavior::OptionalAppend => {
+            if !stdin_has_data_within(OPTIONAL_STDIN_APPEND_READY_TIMEOUT) {
+                return None;
+            }
             eprintln!("Reading additional input from stdin...");
         }
     }
@@ -1812,6 +1817,80 @@ fn read_prompt_from_stdin(behavior: StdinPromptBehavior) -> Option<String> {
     } else {
         Some(buffer)
     }
+}
+
+#[cfg(unix)]
+fn stdin_has_data_within(timeout: std::time::Duration) -> bool {
+    stdin_fd_has_data_within(libc::STDIN_FILENO, timeout)
+}
+
+#[cfg(unix)]
+fn stdin_fd_has_data_within(fd: std::os::fd::RawFd, timeout: std::time::Duration) -> bool {
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let timeout_ms = timeout.as_millis().min(i32::MAX as u128) as i32;
+    // Safety: `pollfd` points to a valid single-element array for this call.
+    let ready = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+    ready > 0 && (pollfd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0
+}
+
+#[cfg(windows)]
+fn stdin_has_data_within(timeout: std::time::Duration) -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_TYPE_PIPE;
+    use windows_sys::Win32::Storage::FileSystem::GetFileType;
+    use windows_sys::Win32::System::Console::GetStdHandle;
+    use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
+    use windows_sys::Win32::System::Pipes::PeekNamedPipe;
+
+    // Safety: GetStdHandle is safe to call with STD_INPUT_HANDLE.
+    let handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if handle == 0 || handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+
+    // Safety: GetFileType does not mutate memory and accepts a valid handle.
+    if unsafe { GetFileType(handle) } != FILE_TYPE_PIPE {
+        return true;
+    }
+
+    let start = std::time::Instant::now();
+    loop {
+        let mut available = 0;
+        // Safety: The handle is stdin and `available` is a valid out pointer.
+        let ok = unsafe {
+            PeekNamedPipe(
+                handle,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null_mut(),
+                &mut available,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return false;
+        }
+        if available > 0 {
+            return true;
+        }
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            return false;
+        }
+        std::thread::sleep(std::cmp::min(
+            std::time::Duration::from_millis(10),
+            timeout - elapsed,
+        ));
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn stdin_has_data_within(_timeout: std::time::Duration) -> bool {
+    true
 }
 
 fn prompt_with_stdin_context(prompt: &str, stdin_text: &str) -> String {

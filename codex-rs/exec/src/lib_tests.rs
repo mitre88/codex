@@ -10,6 +10,12 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 use pretty_assertions::assert_eq;
 use std::io;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::fd::FromRawFd;
+#[cfg(unix)]
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tempfile::tempdir;
@@ -255,6 +261,43 @@ fn prompt_with_stdin_context_preserves_trailing_newline() {
         combined,
         "Summarize this concisely\n\n<stdin>\nmy output\n</stdin>"
     );
+}
+
+#[cfg(unix)]
+fn pipe_fds() -> (OwnedFd, OwnedFd) {
+    let mut fds = [-1; 2];
+    // Safety: `fds` is a valid two-element out array for `pipe`.
+    let pipe_result = unsafe { libc::pipe(fds.as_mut_ptr()) };
+    assert_eq!(pipe_result, 0, "pipe should be created");
+    // Safety: both fds were returned by `pipe` and are now owned by these values.
+    unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) }
+}
+
+#[cfg(unix)]
+#[test]
+fn stdin_fd_has_data_within_is_false_for_empty_open_pipe() {
+    let (read_fd, _write_fd) = pipe_fds();
+
+    assert!(!stdin_fd_has_data_within(
+        read_fd.as_raw_fd(),
+        std::time::Duration::ZERO
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn stdin_fd_has_data_within_is_true_for_pipe_with_bytes() {
+    let (read_fd, write_fd) = pipe_fds();
+
+    let byte = [b'x'];
+    // Safety: `write_fd` is a valid pipe write fd and `byte` is a valid buffer.
+    let written = unsafe { libc::write(write_fd.as_raw_fd(), byte.as_ptr().cast(), byte.len()) };
+    assert_eq!(written, 1, "one byte should be written");
+
+    assert!(stdin_fd_has_data_within(
+        read_fd.as_raw_fd(),
+        std::time::Duration::ZERO
+    ));
 }
 
 #[test]
