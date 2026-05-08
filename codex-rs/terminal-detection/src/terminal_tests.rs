@@ -277,6 +277,30 @@ fn detects_warp_terminal() {
 }
 
 #[test]
+fn detects_warp_cli_agent_protocol_without_term_program() {
+    let env = FakeEnvironment::new()
+        .with_var("WARP_CLI_AGENT_PROTOCOL_VERSION", "1")
+        .with_var("TERM", "xterm-256color");
+    let terminal = detect_terminal_info_from_env(&env);
+    assert_eq!(
+        terminal,
+        terminal_info(
+            TerminalName::WarpTerminal,
+            /*term_program*/ None,
+            /*version*/ None,
+            /*term*/ None,
+            /*multiplexer*/ None,
+        ),
+        "warp_cli_agent_protocol_info"
+    );
+    assert_eq!(
+        terminal.user_agent_token(),
+        "WarpTerminal",
+        "warp_cli_agent_protocol_user_agent"
+    );
+}
+
+#[test]
 fn detects_tmux_multiplexer() {
     let env = FakeEnvironment::new()
         .with_var("TMUX", "/tmp/tmux-1000/default,123,0")

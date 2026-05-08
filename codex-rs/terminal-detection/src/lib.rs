@@ -212,6 +212,7 @@ impl TerminalInfo {
 }
 
 static TERMINAL_INFO: OnceLock<TerminalInfo> = OnceLock::new();
+const WARP_CLI_AGENT_PROTOCOL_VERSION_ENV_VAR: &str = "WARP_CLI_AGENT_PROTOCOL_VERSION";
 
 /// Environment variable access used by terminal detection.
 ///
@@ -279,7 +280,8 @@ pub fn terminal_info() -> TerminalInfo {
 ///   `ghostty 1.2.3`), while the client term name becomes the `TERM` capability string.
 /// - Otherwise, `TERM_PROGRAM` (plus `TERM_PROGRAM_VERSION`) drives the detected terminal name.
 ///   This means `TERM_PROGRAM` can mask later probes (for example `WT_SESSION`).
-/// - Next, terminal-specific variables (WEZTERM, iTerm2, Apple Terminal, kitty, etc.) are checked.
+/// - Next, terminal-specific variables (Warp CLI agent, WEZTERM, iTerm2, Apple Terminal, kitty,
+///   etc.) are checked.
 /// - Finally, `TERM` is used as the capability fallback with `TerminalName::Unknown`.
 ///
 /// tmux client term info is only consulted when a tmux multiplexer is detected, and it is
@@ -300,6 +302,14 @@ fn detect_terminal_info_from_env(env: &dyn Environment) -> TerminalInfo {
         let version = env.var_non_empty("TERM_PROGRAM_VERSION");
         let name = terminal_name_from_term_program(&term_program).unwrap_or(TerminalName::Unknown);
         return TerminalInfo::from_term_program(name, term_program, version, multiplexer);
+    }
+
+    if env.has_non_empty(WARP_CLI_AGENT_PROTOCOL_VERSION_ENV_VAR) {
+        return TerminalInfo::from_name(
+            TerminalName::WarpTerminal,
+            /*version*/ None,
+            multiplexer,
+        );
     }
 
     if env.has("WEZTERM_VERSION") {
