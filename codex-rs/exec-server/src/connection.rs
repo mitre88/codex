@@ -1,3 +1,7 @@
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -24,6 +28,8 @@ use tokio::io::BufWriter;
 
 pub(crate) const CHANNEL_CAPACITY: usize = 128;
 const STDIO_TERMINATION_GRACE_PERIOD: Duration = Duration::from_secs(2);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug)]
 pub(crate) enum JsonRpcConnectionEvent {
@@ -190,6 +196,10 @@ fn kill_windows_process_tree(pid: u32) -> bool {
     let pid = pid.to_string();
     match std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
         .status()
     {
         Ok(status) => status.success(),

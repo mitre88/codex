@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::future::Future;
 use std::io;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -196,6 +198,8 @@ impl StdioServerLauncher for LocalStdioServerLauncher {
 
 #[cfg(unix)]
 const PROCESS_GROUP_TERM_GRACE_PERIOD: Duration = Duration::from_secs(2);
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[cfg(unix)]
 struct LocalProcessTerminator {
@@ -341,6 +345,10 @@ impl LocalProcessTerminator {
             .arg(self.pid.to_string())
             .arg("/T")
             .arg("/F")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
             .status();
     }
 
