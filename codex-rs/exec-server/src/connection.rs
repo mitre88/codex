@@ -190,6 +190,9 @@ fn kill_windows_process_tree(pid: u32) -> bool {
     let pid = pid.to_string();
     match std::process::Command::new("taskkill")
         .args(["/PID", pid.as_str(), "/T", "/F"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
     {
         Ok(status) => status.success(),
