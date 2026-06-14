@@ -441,6 +441,41 @@ async fn find_thread_path_by_id_ignores_compression_temp_matches() -> anyhow::Re
     Ok(())
 }
 
+#[tokio::test]
+async fn read_paths_tolerate_leading_utf8_bom() -> anyhow::Result<()> {
+    // Regression test for #28139: a rollout whose first bytes are a UTF-8 BOM
+    // (`EF BB BF`), as written by some external editors, must not fail the
+    // thread read. Before the fix, the BOM-prefixed session-meta line failed to
+    // parse, producing "does not start with session metadata" and blocking
+    // message creation entirely.
+    let home = TempDir::new()?;
+    let uuid = Uuid::from_u128(42);
+    let thread_id = ThreadId::from_string(&uuid.to_string())?;
+    let rollout_path = rollout_path(home.path(), "2025-01-03T12-00-00", uuid);
+    write_rollout(&rollout_path, thread_id, "hello with bom")?;
+
+    // Simulate an external editor re-saving the file with a leading UTF-8 BOM.
+    let original = fs::read(&rollout_path)?;
+    assert_eq!(original.first(), Some(&b'{'));
+    let mut bom_prefixed = vec![0xEF, 0xBB, 0xBF];
+    bom_prefixed.extend_from_slice(&original);
+    fs::write(&rollout_path, bom_prefixed)?;
+
+    // Resume path must still recover the session metadata and thread id.
+    let (items, loaded_thread_id, parse_errors) =
+        RolloutRecorder::load_rollout_items(&rollout_path).await?;
+    assert_eq!(loaded_thread_id, Some(thread_id));
+    assert_eq!(parse_errors, 0);
+    assert_eq!(items.len(), 2);
+
+    // Head / session-meta read path must not error with
+    // "does not start with session metadata".
+    let meta = crate::read_session_meta_line(&rollout_path).await?;
+    assert_eq!(meta.meta.id, thread_id);
+
+    Ok(())
+}
+
 fn rollout_path(home: &std::path::Path, ts: &str, uuid: Uuid) -> std::path::PathBuf {
     home.join("sessions/2025/01/03")
         .join(format!("rollout-{ts}-{uuid}.jsonl"))

@@ -193,6 +193,10 @@ impl RolloutFile {
 /// Line-oriented rollout reader returned by [`open_rollout_line_reader`].
 pub struct RolloutLineReader {
     inner: RolloutLineReaderInner,
+    /// Whether the first physical line has been emitted yet. Used to strip a
+    /// leading UTF-8 BOM exactly once, since it can only appear at the very
+    /// start of the file.
+    seen_first_line: bool,
 }
 
 enum RolloutLineReaderInner {
@@ -203,7 +207,7 @@ enum RolloutLineReaderInner {
 impl RolloutLineReader {
     /// Reads the next JSONL record from the rollout.
     pub async fn next_line(&mut self) -> io::Result<Option<String>> {
-        match &mut self.inner {
+        let line = match &mut self.inner {
             RolloutLineReaderInner::Plain(lines) => lines.next_line().await,
             RolloutLineReaderInner::Blocking(slot) => {
                 let Some(mut reader) = slot.take() else {
@@ -216,7 +220,30 @@ impl RolloutLineReader {
                 *slot = Some(reader);
                 line
             }
+        }?;
+
+        // The first line of a rollout may carry a UTF-8 BOM (`EF BB BF`) when an
+        // external editor re-saves the file. `str::trim` does not remove it
+        // (U+FEFF is not Unicode `White_Space`) and `serde_json` rejects it,
+        // which would make the session-meta line unparseable and fail the entire
+        // thread read (see issue #28139). Strip a single leading BOM from the
+        // first line so every consumer (summary, head, search, resume) tolerates
+        // it.
+        if !self.seen_first_line {
+            self.seen_first_line = true;
+            if let Some(line) = line {
+                return Ok(Some(strip_leading_bom(line)));
+            }
         }
+        Ok(line)
+    }
+}
+
+/// Removes a single leading UTF-8 BOM (U+FEFF) from `line`, if present.
+fn strip_leading_bom(line: String) -> String {
+    match line.strip_prefix('\u{feff}') {
+        Some(rest) => rest.to_string(),
+        None => line,
     }
 }
 
@@ -993,11 +1020,13 @@ mod reader {
             .map_err(io::Error::other)??;
             return Ok(RolloutLineReader {
                 inner: RolloutLineReaderInner::Blocking(Some(reader)),
+                seen_first_line: false,
             });
         }
         let file = tokio::fs::File::open(path).await?;
         Ok(RolloutLineReader {
             inner: RolloutLineReaderInner::Plain(tokio::io::BufReader::new(file).lines()),
+            seen_first_line: false,
         })
     }
 }
