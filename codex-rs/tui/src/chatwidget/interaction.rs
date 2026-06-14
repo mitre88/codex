@@ -151,6 +151,20 @@ impl ChatWidget {
             return;
         }
 
+        // Interrupting an active turn with the configured interrupt key (Esc by
+        // default) is otherwise handled by `BottomPane` -> `StatusIndicatorWidget`,
+        // which has no goal/thread context. Mirror the Ctrl+C path here so that
+        // interrupting also pauses an active `/goal`; without this the goal
+        // lifecycle keeps believing the goal is active after an Esc interrupt,
+        // leaving follow-up messages in a confusing state. See issue #28104.
+        if self.chat_keymap.interrupt_turn.is_pressed(key_event)
+            && self.bottom_pane.is_task_running()
+            && self.bottom_pane.no_modal_or_popup_active()
+            && !self.should_handle_vim_insert_escape(key_event)
+        {
+            self.pause_active_goal_for_interrupt();
+        }
+
         match key_event {
             KeyEvent {
                 code: KeyCode::BackTab,
